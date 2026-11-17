@@ -2,6 +2,8 @@
 
 mod backend;
 mod bytecode;
+#[cfg(test)]
+mod contract_tests;
 mod execution;
 mod sandbox;
 mod test_execution;
