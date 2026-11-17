@@ -1,19 +1,10 @@
 pragma solcore;
 
 import * from std;
-import { mload, address as addressOpcode } from std.opcodes;
+import { mload } from std.opcodes;
+import { selector } from external_calls;
 
-export { thisAddress, selector, callBalanceOf, tryTransfer, callTransfer };
-
-// The address of the contract running this code.
-function thisAddress() returns (address) {
-    return address(addressOpcode());
-}
-
-// The 4-byte selector of a function signature, computed at compile time.
-function selector(comptime sig: string) returns (memory_ref) {
-    return truncate(to_bytes(bytes32(keccakLit(sig))), 4);
-}
+export { callBalanceOf, tryTransfer, callTransfer };
 
 // Calls token.balanceOf(who) and returns the first word of the return data.
 function callBalanceOf(token: address, who: address) returns (uint256) {

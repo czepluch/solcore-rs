@@ -2,7 +2,9 @@ pragma solcore;
 
 import * from std;
 import * from std.dispatch;
-import { thisAddress, callBalanceOf, tryTransfer, callTransfer } from token_client;
+import { thisAddress } from external_calls;
+import { callBalanceOf, tryTransfer, callTransfer } from token_client;
+import { prank, deployCode } from cheatcodes;
 
 contract Token {
     balances: mapping(address => uint256);
@@ -83,5 +85,45 @@ contract TokenSetUpTest {
         callTransfer(token, other, uint256(250));
         require(callBalanceOf(token, thisAddress()) == uint256(750), "sender balance");
         require(callBalanceOf(token, other) == uint256(250), "receiver balance");
+    }
+}
+
+// Deploys its own Token in setUp with the deployCode cheatcode, so this
+// contract holds the whole supply, and acts as other accounts with prank.
+contract TokenCheatcodeTest {
+    token: address;
+
+    function setUp() public {
+        token = deployCode("Token");
+    }
+
+    function testDeployerHoldsSupply() public {
+        require(callBalanceOf(token, thisAddress()) == uint256(1000), "expected 1000 tokens");
+    }
+
+    function testTransferFromAccountWithoutTokensReverts() public {
+        prank(address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8));
+        require(not(tryTransfer(token, thisAddress(), uint256(1))), "transfer from an empty account succeeded");
+    }
+
+    function testPrankedTransferMovesTheSendersBalance() public {
+        let other = address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+        callTransfer(token, other, uint256(300));
+        prank(other);
+        callTransfer(token, thisAddress(), uint256(100));
+        require(callBalanceOf(token, other) == uint256(200), "other balance");
+        require(callBalanceOf(token, thisAddress()) == uint256(800), "test contract balance");
+    }
+
+    function testPrankAppliesToTheNextCallOnly() public {
+        let other = address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
+        prank(other);
+        require(callBalanceOf(token, other) == uint256(0), "other balance");
+        callTransfer(token, other, uint256(5));
+        require(callBalanceOf(token, other) == uint256(5), "transfer after the prank");
+    }
+
+    function testMisspelledContractNameFailsWhenTheTestRuns() public {
+        let misspelled = deployCode("Tokn");
     }
 }
