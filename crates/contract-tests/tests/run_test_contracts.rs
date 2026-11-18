@@ -5,8 +5,9 @@
 
 use hir::input::SourceFile;
 use solcore_contract_tests::{
-    ContractReport, CreationBytecode, DEPLOYER, SetUpFailure, SetUpStep, TestChain, abi,
-    creation_bytecode, merge_creation_bytecode, run_test_contracts, test_contracts,
+    ContractReport, CreationBytecode, DEPLOYER, FUZZ_RUNS, FuzzRuns, SetUpFailure, SetUpStep,
+    TestChain, TestKind, TestReport, abi, creation_bytecode, merge_creation_bytecode,
+    run_test_contracts, test_contracts,
 };
 use solcore_evm_backend::Backend;
 use vfs::{AnalysisHost, Workspace, WorkspaceFileChange};
@@ -30,7 +31,15 @@ const FIXTURES: &[(&str, &str)] = &[
         "external_calls.sol",
         include_str!("fixtures/external_calls.sol"),
     ),
+    ("fuzz_test.sol", include_str!("fixtures/fuzz_test.sol")),
+    (
+        "arbitrary_test.sol",
+        include_str!("fixtures/arbitrary_test.sol"),
+    ),
 ];
+
+/// A fixed seed, so fuzz tests get the same arguments on every run.
+const FUZZ_SEED: u64 = 1;
 
 fn backend() -> Backend {
     match std::env::var("SOLCORE_CONTRACT_TESTS_BACKEND").as_deref() {
@@ -91,11 +100,28 @@ fn run_fixture(
         .filter(|contract| contract.name == test_contract)
         .collect::<Vec<_>>();
     assert_eq!(contracts.len(), 1, "test contract {test_contract}");
-    let report = run_test_contracts(&creation_bytecode, &contracts)
+    let report = run_test_contracts(&creation_bytecode, &contracts, FUZZ_SEED)
         .pop()
         .expect("one report");
     println!("{report:#?}");
     report
+}
+
+/// The test of `report` with `signature`.
+fn test<'a>(report: &'a ContractReport, signature: &str) -> &'a TestReport {
+    report
+        .tests
+        .iter()
+        .find(|test| test.signature == signature)
+        .unwrap_or_else(|| panic!("test {signature}"))
+}
+
+/// The fuzz runs of `test`.
+fn fuzz_runs(test: &TestReport) -> &FuzzRuns {
+    match &test.kind {
+        TestKind::Fuzz(runs) => runs,
+        TestKind::Unit { .. } => panic!("{} is not a fuzz test", test.signature),
+    }
 }
 
 /// The revert message of each failing test, by signature.
@@ -196,7 +222,9 @@ fn set_up_deploys_the_token_from_an_embedded_deploy_object() {
         .filter(|contract| contract.name == "TokenSetUpTest")
         .collect::<Vec<_>>();
 
-    let report = run_test_contracts(&bytecode, &contracts).pop().unwrap();
+    let report = run_test_contracts(&bytecode, &contracts, FUZZ_SEED)
+        .pop()
+        .unwrap();
     assert_eq!(report.set_up, Ok(()));
     assert_eq!(report.tests.len(), 2);
     assert!(failures(&report).is_empty(), "{report:?}");
@@ -268,4 +296,101 @@ fn set_up_deploys_a_contract_from_an_imported_module() {
         failures(&report),
         [("testFailsOnPurpose()", "deliberately failing check")]
     );
+}
+
+#[test]
+fn a_fuzz_test_reports_the_arguments_of_its_failing_run() {
+    let workspace = fixture_workspace("fuzz_test.sol");
+    let report = run_fixture(&workspace, "fuzz_test.sol", &["fuzz_test.sol"], "FuzzTest");
+    let adding_one = test(&report, "testAddingOneIncreasesTheValue(uint256)");
+    let runs = fuzz_runs(adding_one);
+    let counterexample = runs.counterexample.as_ref().expect("counterexample");
+    assert!(adding_one.result.is_err());
+    assert!(runs.runs < FUZZ_RUNS, "{runs:?}");
+    assert_eq!(
+        counterexample.arguments,
+        [revm::primitives::U256::MAX.to_string()]
+    );
+    assert_eq!(counterexample.calldata.len(), 4 + 32);
+}
+
+#[test]
+fn every_generated_argument_passes_std_abi_decoding() {
+    let workspace = fixture_workspace("fuzz_test.sol");
+    let report = run_fixture(&workspace, "fuzz_test.sol", &["fuzz_test.sol"], "FuzzTest");
+    let every_type = test(
+        &report,
+        "testAcceptsEveryParameterType(uint8,int8,int256,address,bool,bytes4,bytes32)",
+    );
+    assert_eq!(every_type.result, Ok(()));
+    assert_eq!(fuzz_runs(every_type).runs, FUZZ_RUNS);
+}
+
+#[test]
+fn a_fuzz_test_with_an_unsupported_parameter_type_fails_without_running() {
+    let workspace = fixture_workspace("fuzz_test.sol");
+    let report = run_fixture(&workspace, "fuzz_test.sol", &["fuzz_test.sol"], "FuzzTest");
+    let text = test(&report, "testTakesText(string)");
+    assert_eq!(
+        text.result,
+        Err("fuzzing does not support parameters of type `string`".to_owned())
+    );
+    assert_eq!(fuzz_runs(text).runs, 0);
+}
+
+#[test]
+fn a_fuzzed_sender_is_rejected_by_the_guarded_function() {
+    let workspace = fixture_workspace("fuzz_test.sol");
+    let report = run_fixture(
+        &workspace,
+        "fuzz_test.sol",
+        &["fuzz_test.sol", "guarded_test.sol"],
+        "GuardedFuzzTest",
+    );
+    assert_eq!(report.set_up, Ok(()));
+    let senders = test(&report, "testEveryOtherSenderIsRejected(address)");
+    assert_eq!(senders.result, Ok(()));
+    assert_eq!(fuzz_runs(senders).runs, FUZZ_RUNS);
+}
+
+#[test]
+fn arbitrary_builds_data_types_from_the_fuzzed_seed() {
+    let workspace = fixture_workspace("arbitrary_test.sol");
+    let report = run_fixture(
+        &workspace,
+        "arbitrary_test.sol",
+        &["arbitrary_test.sol"],
+        "ArbitraryTest",
+    );
+    let apply_change = test(&report, "testApplyingAChangeNeverReverts(uint256)");
+    assert!(apply_change.result.is_err());
+    assert!(fuzz_runs(apply_change).counterexample.is_some());
+    let payment = test(&report, "testAPaymentKeepsItsChange(uint256)");
+    assert_eq!(payment.result, Ok(()));
+    assert_eq!(fuzz_runs(payment).runs, FUZZ_RUNS);
+}
+
+#[test]
+fn arbitrary_builds_every_constructor_of_a_data_type() {
+    let workspace = fixture_workspace("arbitrary_test.sol");
+    let bytecode = fixture_creation_bytecode(&workspace, &["arbitrary_test.sol"]);
+    let mut chain = TestChain::new(CreationBytecode::new());
+    let init = bytecode["ArbitraryTest"].clone().expect("compiled");
+    let contract = chain.deploy(DEPLOYER, &init, &[]).unwrap();
+    let seeds = 1000;
+    let mut counts = [0; 3];
+    for seed in 0..seeds {
+        let calldata = [
+            abi::selector("changeConstructor(uint256)"),
+            abi::encode_u256(seed),
+        ]
+        .concat();
+        let output = chain
+            .call(DEPLOYER, contract, calldata, false)
+            .result
+            .unwrap();
+        counts[usize::from(output[31])] += 1;
+    }
+    println!("Deposit, Withdraw, Reset from {seeds} seeds: {counts:?}");
+    assert!(counts.iter().all(|count| *count > 0), "{counts:?}");
 }

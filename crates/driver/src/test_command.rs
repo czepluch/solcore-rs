@@ -3,8 +3,9 @@
 use hir::{diag::DiagnosticLevel, input::SourceFile};
 use nameres::LibraryId;
 use solcore_contract_tests::{
-    ContractReport, CreationBytecode, SetUpStep, creation_bytecode, defines_contracts,
-    merge_creation_bytecode, run_test_contracts, test_contracts,
+    ContractReport, CreationBytecode, FuzzRuns, SetUpStep, TestKind, TestReport, abi,
+    creation_bytecode, defines_contracts, merge_creation_bytecode, random_fuzz_seed,
+    run_test_contracts, test_contracts,
 };
 use solcore_evm_backend::Backend;
 
@@ -49,8 +50,9 @@ pub(crate) fn run(db: &DriverDb, entry_file: SourceFile, args: &Args) -> i32 {
         );
         return 1;
     }
-    let reports = run_test_contracts(&all_creation_bytecode, &test_contracts);
-    print!("{}", render_reports(&reports));
+    let fuzz_seed = args.fuzz_seed.unwrap_or_else(random_fuzz_seed);
+    let reports = run_test_contracts(&all_creation_bytecode, &test_contracts, fuzz_seed);
+    print!("{}", render_reports(&reports, fuzz_seed));
     if reports.iter().all(passed) { 0 } else { 1 }
 }
 
@@ -75,7 +77,9 @@ fn passed(report: &ContractReport) -> bool {
     report.set_up.is_ok() && report.tests.iter().all(|test| test.result.is_ok())
 }
 
-fn render_reports(reports: &[ContractReport]) -> String {
+/// Forge's layout: one line per test, a suite result per test contract, a
+/// total, and the fuzz seed when a fuzz test ran.
+fn render_reports(reports: &[ContractReport], fuzz_seed: u64) -> String {
     let mut output = String::new();
     let mut passed_tests = 0;
     let mut failed_tests = 0;
@@ -97,21 +101,12 @@ fn render_reports(reports: &[ContractReport]) -> String {
             failed_tests += 1;
         }
         for test in &report.tests {
-            match &test.result {
-                Ok(()) => {
-                    output.push_str(&format!(
-                        "[PASS] {} (gas: {})\n",
-                        test.signature, test.gas_used
-                    ));
-                    passed_tests += 1;
-                }
-                Err(message) => {
-                    output.push_str(&format!(
-                        "[FAIL: {message}] {} (gas: {})\n",
-                        test.signature, test.gas_used
-                    ));
-                    failed_tests += 1;
-                }
+            output.push_str(&render_test(test));
+            output.push('\n');
+            if test.result.is_ok() {
+                passed_tests += 1;
+            } else {
+                failed_tests += 1;
             }
         }
         output.push_str(&format!(
@@ -123,7 +118,43 @@ fn render_reports(reports: &[ContractReport]) -> String {
         "Ran {}: {passed_tests} passed, {failed_tests} failed\n",
         count(reports.len(), "test contract")
     ));
+    let ran_fuzz_tests = reports
+        .iter()
+        .flat_map(|report| &report.tests)
+        .any(|test| matches!(test.kind, TestKind::Fuzz(_)));
+    if ran_fuzz_tests {
+        output.push_str(&format!("Fuzz seed: {fuzz_seed}\n"));
+    }
     output
+}
+
+/// `[PASS] testName() (gas: 21000)`, or for a fuzz test
+/// `[FAIL: message; counterexample: calldata=0x.. args=[1]] testName(uint256) (runs: 3, μ: 21000, ~: 21000)`.
+fn render_test(test: &TestReport) -> String {
+    let status = match (&test.result, &test.kind) {
+        (Ok(()), _) => "PASS".to_owned(),
+        (
+            Err(message),
+            TestKind::Fuzz(FuzzRuns {
+                counterexample: Some(counterexample),
+                ..
+            }),
+        ) => format!(
+            "FAIL: {message}; counterexample: calldata={} args=[{}]",
+            abi::to_hex(&counterexample.calldata),
+            counterexample.arguments.join(", ")
+        ),
+        (Err(message), _) => format!("FAIL: {message}"),
+    };
+    let measurements = match &test.kind {
+        TestKind::Unit { gas_used } => format!(" (gas: {gas_used})"),
+        TestKind::Fuzz(FuzzRuns { runs: 0, .. }) => String::new(),
+        TestKind::Fuzz(runs) => format!(
+            " (runs: {}, μ: {}, ~: {})",
+            runs.runs, runs.mean_gas, runs.median_gas
+        ),
+    };
+    format!("[{status}] {}{measurements}", test.signature)
 }
 
 /// `1 test`, `2 tests`.

@@ -55,7 +55,7 @@ fn word_as_usize(word: &[u8]) -> Result<usize, String> {
     Ok(u64::from_be_bytes(low.try_into().expect("8 bytes")) as usize)
 }
 
-pub(crate) fn to_hex(bytes: &[u8]) -> String {
+pub fn to_hex(bytes: &[u8]) -> String {
     format!(
         "0x{}",
         bytes

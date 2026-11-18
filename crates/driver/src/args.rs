@@ -53,6 +53,8 @@ pub(crate) struct Args {
     pub(crate) specialize_options: specialize::SpecializeOptions,
     /// EVM backend for `test`.
     pub(crate) backend: Option<Backend>,
+    /// Seed for the arguments of fuzz tests in `test`.
+    pub(crate) fuzz_seed: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +122,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut emit_yul_object = None;
     let mut specialize_options = specialize::SpecializeOptions::default();
     let mut backend = None;
+    let mut fuzz_seed = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         if arg.to_str().is_none() {
@@ -246,6 +249,10 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                 let value = next_string_option_value(&mut iter, "--backend", "sonatina|solc")?;
                 backend = Some(parse_backend(&value)?);
             }
+            Some("--fuzz-seed") => {
+                let value = next_string_option_value(&mut iter, "--fuzz-seed", "N")?;
+                fuzz_seed = Some(parse_fuzz_seed(&value)?);
+            }
             Some("--emit-hull") => {
                 emit_hull = Some(EmitTarget::Stdout);
             }
@@ -326,6 +333,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             }
             Some(arg) if arg.starts_with("--backend=") => {
                 backend = Some(parse_backend(&arg["--backend=".len()..])?);
+            }
+            Some(arg) if arg.starts_with("--fuzz-seed=") => {
+                fuzz_seed = Some(parse_fuzz_seed(&arg["--fuzz-seed=".len()..])?);
             }
             Some(arg) if arg.starts_with("--file=") => {
                 let value = &arg["--file=".len()..];
@@ -431,6 +441,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         emit_yul_object,
         specialize_options,
         backend,
+        fuzz_seed,
     })))
 }
 
@@ -567,6 +578,12 @@ fn parse_backend(value: &str) -> Result<Backend, String> {
     }
 }
 
+fn parse_fuzz_seed(value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("--fuzz-seed requires an unsigned 64-bit integer, got `{value}`"))
+}
+
 fn parse_unicode_choice(value: &str) -> Result<UnicodeChoice, String> {
     match value {
         "auto" => Ok(UnicodeChoice::Auto),
@@ -655,6 +672,7 @@ Options:
   -o, --output-dir DIR               Directory for emitted artifact and ABI files
   --abi                              Emit a JSON ABI file for each contract
   --backend sonatina|solc            EVM backend for test (default: sonatina; solc runs SOLC or solc on PATH)
+  --fuzz-seed N                      Seed for the arguments of fuzz tests in test (default: random)
   --emit-hull[=FILE]                 Emit Hull to stdout or FILE
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE

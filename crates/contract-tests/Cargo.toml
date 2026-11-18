@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 solcore-evm-backend = { path = "../evm-backend" }
+fastrand = "2.4.1"
 hir = { workspace = true }
 hir-ty = { workspace = true }
 hull = { path = "../hull", package = "solcore-hull" }

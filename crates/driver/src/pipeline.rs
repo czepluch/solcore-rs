@@ -58,10 +58,16 @@ pub(crate) fn run_compiler(command: Command) {
             std::process::exit(2);
         }
     };
-    if command == Command::Compile && args.backend.is_some() {
-        eprintln!("--backend only applies to test");
-        eprintln!("{}", usage_text(program.as_ref()));
-        std::process::exit(2);
+    if command == Command::Compile {
+        let test_options = [
+            ("--backend", args.backend.is_some()),
+            ("--fuzz-seed", args.fuzz_seed.is_some()),
+        ];
+        if let Some((option, _)) = test_options.iter().find(|(_, set)| *set) {
+            eprintln!("{option} only applies to test");
+            eprintln!("{}", usage_text(program.as_ref()));
+            std::process::exit(2);
+        }
     }
     init_tracing(args.trace);
 

@@ -1,9 +1,10 @@
 pragma solcore;
 
 import * from std;
-import { mload, create } from std.opcodes;
+import * from std.Generic;
+import { mload, create, shr } from std.opcodes;
 
-export { prank, getCode, deployCode };
+export { prank, getCode, deployCode, Arbitrary, arbitrary };
 
 // --- Test cheatcodes ---
 // Functions that `solcore test` answers at forge-std's VM_ADDRESS, called with
@@ -50,4 +51,107 @@ function deployCode(name: memory<string>) returns (address) {
     let deployed = create(0, code + 32, mload(code));
     require(deployed != 0, "deployCode failed");
     return address(deployed);
+}
+
+// --- Random values for fuzz tests ---
+
+// Builds values of type `a` from a seed. `generate` returns the value and the
+// seed for the next value.
+trait Arbitrary<a> {
+    function generate(p: Proxy<a>, seed: word) returns ((a, word));
+}
+
+// A value of type `a` built from `seed`, such as a fuzz test's argument.
+function arbitrary<a>(seed: uint256) returns (a) where a: Arbitrary {
+    let p: Proxy<a>;
+    match (Arbitrary.generate(p, Typedef.rep(seed))) {
+        case (value, _) {
+            return value;
+        }
+    }
+}
+
+impl Arbitrary<uint256> {
+    function generate(p: Proxy<uint256>, seed: word) returns ((uint256, word)) {
+        let next = hash1(seed);
+        let value: uint256 = Typedef.abs(next);
+        return (value, next);
+    }
+}
+
+impl Arbitrary<address> {
+    function generate(p: Proxy<address>, seed: word) returns ((address, word)) {
+        let next = hash1(seed);
+        let value: address = Typedef.abs(shr(96, next));
+        return (value, next);
+    }
+}
+
+impl Arbitrary<bool> {
+    function generate(p: Proxy<bool>, seed: word) returns ((bool, word)) {
+        let next = hash1(seed);
+        return (tobool(shr(255, next)), next);
+    }
+}
+
+// The cases below build any type with a Generic instance from its
+// representation: units, pairs and sums.
+
+impl Arbitrary<()> {
+    function generate(p: Proxy<()>, seed: word) returns (((), word)) {
+        return ((), seed);
+    }
+}
+
+impl<f, g> Arbitrary<(f, g)> where f: Arbitrary, g: Arbitrary {
+    function generate(p: Proxy<(f, g)>, seed: word) returns (((f, g), word)) {
+        let pf: Proxy<f>;
+        let pg: Proxy<g>;
+        match (Arbitrary.generate(pf, seed)) {
+            case (first, afterFirst) {
+                match (Arbitrary.generate(pg, afterFirst)) {
+                    case (second, afterSecond) {
+                        return ((first, second), afterSecond);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Picks either side with equal chance, so in a nested sum the later
+// constructors are picked less often than the first.
+impl<f, g> Arbitrary<sum<f, g>> where f: Arbitrary, g: Arbitrary {
+    function generate(p: Proxy<sum<f, g>>, seed: word) returns ((sum<f, g>, word)) {
+        let next = hash1(seed);
+        match (shr(255, next)) {
+            case 0 {
+                let pf: Proxy<f>;
+                match (Arbitrary.generate(pf, next)) {
+                    case (left, afterLeft) {
+                        return (inl(left), afterLeft);
+                    }
+                }
+            }
+            default {
+                let pg: Proxy<g>;
+                match (Arbitrary.generate(pg, next)) {
+                    case (right, afterRight) {
+                        return (inr(right), afterRight);
+                    }
+                }
+            }
+        }
+    }
+}
+
+default impl<a, rep> Arbitrary<a> where a: Generic<rep>, rep: Arbitrary {
+    function generate(p: Proxy<a>, seed: word) returns ((a, word)) {
+        let prep: Proxy<rep>;
+        match (Arbitrary.generate(prep, seed)) {
+            case (representation, next) {
+                return (Generic.to(representation), next);
+            }
+        }
+    }
 }

@@ -5,6 +5,8 @@ import * from std.dispatch;
 import { selector } from external_calls;
 import { prank, deployCode } from std.test;
 
+export { Guarded, tryOnlyAdmin };
+
 contract Guarded {
     admin: address;
 
