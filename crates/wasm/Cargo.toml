@@ -25,7 +25,7 @@ nameres = { workspace = true }
 hull = { path = "../hull", package = "solcore-hull" }
 yul = { path = "../yul", package = "solcore-yul" }
 sonatina = { path = "../sonatina", package = "solcore-sonatina" }
-sonatina-codegen = { workspace = true }
+solcore-evm-backend = { path = "../evm-backend" }
 revm = { version = "43.0.2", default-features = false, features = ["std", "sha3-keccak", "memory_limit"] }
 
 # Cryptographic dependencies obtain entropy through the browser Web Crypto API.

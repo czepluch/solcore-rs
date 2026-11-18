@@ -4,6 +4,8 @@ use std::{
     path::PathBuf,
 };
 
+use solcore_evm_backend::Backend;
+
 const DEFAULT_DIAGNOSTIC_WIDTH: usize = 100;
 
 pub(crate) enum ParsedArgs {
@@ -49,6 +51,8 @@ pub(crate) struct Args {
     pub(crate) emit_yul_object: Option<String>,
     /// Resource limits used by monomorphization and partial evaluation.
     pub(crate) specialize_options: specialize::SpecializeOptions,
+    /// EVM backend for `test`.
+    pub(crate) backend: Option<Backend>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +119,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut emit_sonatina = None;
     let mut emit_yul_object = None;
     let mut specialize_options = specialize::SpecializeOptions::default();
+    let mut backend = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         if arg.to_str().is_none() {
@@ -237,6 +242,10 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some("--abi") => {
                 emit_abi = true;
             }
+            Some("--backend") => {
+                let value = next_string_option_value(&mut iter, "--backend", "sonatina|solc")?;
+                backend = Some(parse_backend(&value)?);
+            }
             Some("--emit-hull") => {
                 emit_hull = Some(EmitTarget::Stdout);
             }
@@ -314,6 +323,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             }
             Some(arg) if arg.starts_with("--warnings=") => {
                 warning_policy = parse_warning_policy(&arg["--warnings=".len()..])?;
+            }
+            Some(arg) if arg.starts_with("--backend=") => {
+                backend = Some(parse_backend(&arg["--backend=".len()..])?);
             }
             Some(arg) if arg.starts_with("--file=") => {
                 let value = &arg["--file=".len()..];
@@ -418,6 +430,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         emit_sonatina,
         emit_yul_object,
         specialize_options,
+        backend,
     })))
 }
 
@@ -544,6 +557,16 @@ fn parse_color_choice(value: &str) -> Result<ColorChoice, String> {
     }
 }
 
+fn parse_backend(value: &str) -> Result<Backend, String> {
+    match value {
+        "sonatina" => Ok(Backend::Sonatina),
+        "solc" => Ok(Backend::Solc),
+        _ => Err(format!(
+            "--backend must be one of sonatina or solc, got `{value}`"
+        )),
+    }
+}
+
 fn parse_unicode_choice(value: &str) -> Result<UnicodeChoice, String> {
     match value {
         "auto" => Ok(UnicodeChoice::Auto),
@@ -615,9 +638,11 @@ pub(crate) fn help_text(program: &str) -> String {
 Solcore Rust driver
 
 Usage: {program} [OPTIONS] [<input.sol>]
+       {program} test [OPTIONS] <input.sol>
        {program} lsp [--stdio]
 
 Commands:
+  test                               Run the test contracts in <input.sol>
   lsp                                Run the bundled language server over stdin/stdout
 
 Options:
@@ -629,6 +654,7 @@ Options:
   --lib NAME=PATH                    Alias for --external-lib
   -o, --output-dir DIR               Directory for emitted artifact and ABI files
   --abi                              Emit a JSON ABI file for each contract
+  --backend sonatina|solc            EVM backend for test (default: sonatina; solc runs SOLC or solc on PATH)
   --emit-hull[=FILE]                 Emit Hull to stdout or FILE
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE

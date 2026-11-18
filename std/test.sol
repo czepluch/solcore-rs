@@ -1,20 +1,27 @@
 pragma solcore;
 
-// Test-only functions (cheatcodes) that the test runner answers at forge-std's
-// VM_ADDRESS, called with the signatures of forge-std's Vm interface.
 import * from std;
 import { mload, create } from std.opcodes;
-import { selector } from external_calls;
 
 export { prank, getCode, deployCode };
+
+// --- Test cheatcodes ---
+// Functions that `solcore test` answers at forge-std's VM_ADDRESS, called with
+// the signatures of forge-std's Vm interface.
 
 function cheatcodeAddress() returns (address) {
     return address(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 }
 
+// The calldata of a cheatcode call: the 4-byte selector of `sig`, computed at
+// compile time, followed by `arguments`.
+function cheatcodeCalldata<a>(comptime sig: string, arguments: a) returns (memory<bytes>) where a: MemorySize, a: MemoryEncode {
+    return concat(truncate(to_bytes(bytes32(keccakLit(sig))), 4), arguments);
+}
+
 // Makes the next call from this contract come from `sender`.
 function prank(sender: address) {
-    let payload = concat(selector("prank(address)"), abi_encode(sender));
+    let payload = cheatcodeCalldata("prank(address)", abi_encode(sender));
     match (raw_call(cheatcodeAddress(), uint256(0), payload)) {
         case (ok, _) {
             require(ok, "prank failed");
@@ -24,7 +31,7 @@ function prank(sender: address) {
 
 // Returns the creation bytecode of the contract named `name`.
 function getCode(name: memory<string>) returns (memory<bytes>) {
-    let payload = concat(selector("getCode(string)"), abi_encode(name));
+    let payload = cheatcodeCalldata("getCode(string)", abi_encode(name));
     match (raw_call(cheatcodeAddress(), uint256(0), payload)) {
         case (ok, ret) {
             require(ok, "getCode failed");

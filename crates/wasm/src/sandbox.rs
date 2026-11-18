@@ -23,7 +23,7 @@ use serde_json::Value;
 use solcore_test_directives::{AbiShape, DirectiveValue, Word256, encode_static_abi};
 use vfs::Workspace;
 
-use crate::backend::{self, Backend};
+use solcore_evm_backend::{self as backend, Backend};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

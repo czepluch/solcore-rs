@@ -1,0 +1,19 @@
+[package]
+name = "solcore-contract-tests"
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+solcore-evm-backend = { path = "../evm-backend" }
+hir = { workspace = true }
+hir-ty = { workspace = true }
+hull = { path = "../hull", package = "solcore-hull" }
+parser = { workspace = true }
+revm = { version = "43.0.2", default-features = false, features = ["std", "sha3-keccak", "memory_limit"] }
+
+[dev-dependencies]
+compiler = { workspace = true }
+vfs = { workspace = true }

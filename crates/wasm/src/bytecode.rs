@@ -4,7 +4,7 @@ use revm::primitives::hex;
 use serde::Serialize;
 use vfs::AnalysisHost;
 
-use crate::backend::{self, Backend};
+use solcore_evm_backend::{self as backend, Backend};
 
 #[derive(Clone, Serialize)]
 pub(crate) struct Object {

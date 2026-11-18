@@ -4,7 +4,7 @@ import * from std;
 import * from std.dispatch;
 import { thisAddress } from external_calls;
 import { callBalanceOf, tryTransfer, callTransfer } from token_client;
-import { prank, deployCode } from cheatcodes;
+import { prank, deployCode } from std.test;
 
 contract Token {
     balances: mapping(address => uint256);

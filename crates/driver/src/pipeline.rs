@@ -16,14 +16,30 @@ use crate::{
     trace::init_tracing,
 };
 
-pub(crate) fn run_compiler() {
+/// What the driver does with the input file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Command {
+    /// Checks the input and emits the requested outputs.
+    Compile,
+    /// Runs the test contracts of the input.
+    Test,
+}
+
+pub(crate) fn run_compiler(command: Command) {
     let mut raw_args = env::args_os();
     let program = raw_args
         .next()
         .unwrap_or_else(|| OsString::from("solcore-driver"));
     let program = program.to_string_lossy();
+    if command == Command::Test {
+        raw_args.next();
+    }
     let args = match parse_args(raw_args.collect()) {
         Ok(ParsedArgs::Run(args)) => *args,
+        Ok(ParsedArgs::StandardJson) if command == Command::Test => {
+            eprintln!("--standard-json cannot be used with test");
+            std::process::exit(2);
+        }
         Ok(ParsedArgs::StandardJson) => {
             crate::standard_json::run();
             return;
@@ -42,6 +58,11 @@ pub(crate) fn run_compiler() {
             std::process::exit(2);
         }
     };
+    if command == Command::Compile && args.backend.is_some() {
+        eprintln!("--backend only applies to test");
+        eprintln!("{}", usage_text(program.as_ref()));
+        std::process::exit(2);
+    }
     init_tracing(args.trace);
 
     let input_path = match absolutize(&args.input) {
@@ -138,6 +159,9 @@ pub(crate) fn run_compiler() {
         .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error);
     if !diagnostics.is_empty() {
         eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
+    }
+    if !has_errors && command == Command::Test {
+        std::process::exit(crate::test_command::run(&db, entry_file, &args));
     }
     if !has_errors {
         match maybe_emit_abi_outputs(&db, entry, &args) {

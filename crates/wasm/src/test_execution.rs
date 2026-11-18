@@ -1,6 +1,5 @@
 //! Source-comment tests executed through the contract's ordinary ABI dispatcher.
 
-use crate::backend::Backend;
 use crate::execution::{CALLER, RunResult, RunStatus};
 use crate::sandbox::Sandbox;
 use hir::ast::item::{ContractItem, FuncKind, Item};
@@ -11,6 +10,7 @@ use revm::{
     primitives::{Bytes, U256, hex},
 };
 use serde::Serialize;
+use solcore_evm_backend::Backend;
 use solcore_test_directives::{
     AbiShape, ResolvedE2eAction, ResolvedE2eCall, ResolvedExpectedOutcome, parse_e2e_directive,
     resolve_e2e_directive,

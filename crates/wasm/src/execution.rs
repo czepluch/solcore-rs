@@ -13,7 +13,7 @@ use serde::Serialize;
 use serde_json::Value;
 use vfs::Workspace;
 
-use crate::backend::{self, Backend};
+use solcore_evm_backend::{self as backend, Backend};
 
 pub(crate) const CALL_GAS_LIMIT: u64 = 1_000_000;
 // Deployment pays for storing the runtime bytecode as well as executing the

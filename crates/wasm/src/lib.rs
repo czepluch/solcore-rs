@@ -1,9 +1,6 @@
 //! Browser-facing `wasm-bindgen` API for compiling in-memory Solcore sources.
 
-mod backend;
 mod bytecode;
-#[cfg(test)]
-mod contract_tests;
 mod execution;
 mod sandbox;
 mod test_execution;
@@ -70,7 +67,17 @@ pub fn watch(input: JsValue) -> Result<JsValue, JsValue> {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn set_solc(compile: js_sys::Function) {
-    backend::solc::register(compile);
+    solcore_evm_backend::set_standard_json_compiler(move |input| {
+        compile
+            .call1(&JsValue::NULL, &JsValue::from_str(input))
+            .map_err(|error| {
+                error
+                    .as_string()
+                    .unwrap_or_else(|| format!("solc threw an exception: {error:?}"))
+            })?
+            .as_string()
+            .ok_or_else(|| "solc returned a non-string result".to_owned())
+    });
 }
 
 /// Returns the embedded standard library files as `{ path, content }` objects.
@@ -142,7 +149,7 @@ pub(crate) struct Options {
     #[serde(default)]
     pub(crate) emit_bytecode: bool,
     #[serde(default)]
-    pub(crate) backend: backend::Backend,
+    pub(crate) backend: solcore_evm_backend::Backend,
 }
 
 #[derive(Clone, Serialize)]
@@ -753,10 +760,10 @@ impl<'a> LineIndex<'a> {
 /// Backend for the unit tests: `SOLCORE_WASM_TEST_BACKEND=solc` runs them
 /// through solc (see `SOLC`), and anything else runs them through Sonatina.
 #[cfg(test)]
-pub(crate) fn test_backend() -> backend::Backend {
+pub(crate) fn test_backend() -> solcore_evm_backend::Backend {
     match std::env::var("SOLCORE_WASM_TEST_BACKEND").as_deref() {
-        Ok("solc") => backend::Backend::Solc,
-        _ => backend::Backend::Sonatina,
+        Ok("solc") => solcore_evm_backend::Backend::Solc,
+        _ => solcore_evm_backend::Backend::Sonatina,
     }
 }
 

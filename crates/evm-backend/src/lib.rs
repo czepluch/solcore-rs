@@ -1,22 +1,25 @@
-//! EVM code generation backends for playground bytecode and execution.
+//! EVM bytecode generation for Hull programs.
 //!
-//! Sonatina compiles Hull directly inside this module. The solc backend
-//! renders Hull to Yul and compiles it with solc's Standard JSON interface.
-//! In the browser, solc is the emscripten build registered from JavaScript
-//! with `set_solc`. Native builds, used by tests, run the `solc` executable
-//! named by the `SOLC` environment variable, falling back to `solc` on `PATH`.
+//! Sonatina compiles Hull in-process. The solc backend renders Hull to Yul and
+//! compiles it with solc's Standard JSON interface: through the function
+//! registered with [`set_standard_json_compiler`] when there is one, and
+//! otherwise, in native builds, through the `solc` executable named by the
+//! `SOLC` environment variable, falling back to `solc` on `PATH`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sonatina_codegen::{EvmCompile, OptLevel};
-use vfs::AnalysisHost;
+
+use hir::Db as HirDb;
+
+pub use solc::set_standard_json_compiler;
 
 /// The EVM version used for both compilation and execution.
-const EVM_VERSION: &str = "osaka";
+pub const EVM_VERSION: &str = "osaka";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Backend {
+pub enum Backend {
     #[default]
     Solc,
     Sonatina,
@@ -24,19 +27,19 @@ pub(crate) enum Backend {
 
 /// Creation and runtime code for one compiled object.
 #[derive(Debug)]
-pub(crate) struct ObjectCode {
-    pub(crate) name: String,
-    pub(crate) init: Vec<u8>,
-    pub(crate) runtime: Vec<u8>,
+pub struct ObjectCode {
+    pub name: String,
+    pub init: Vec<u8>,
+    pub runtime: Vec<u8>,
 }
 
 /// Compiles every top-level object of `program`.
 ///
 /// An object-less program compiles to one object whose `init` section is not
 /// a constructor, so callers should execute its `runtime` section directly.
-pub(crate) fn compile_program(
+pub fn compile_program(
     backend: Backend,
-    db: &AnalysisHost,
+    db: &dyn HirDb,
     program: &hull::Program<'_>,
 ) -> Result<Vec<ObjectCode>, String> {
     match backend {
@@ -64,9 +67,9 @@ pub(crate) fn compile_program(
 /// Compiles a single-contract program whose runtime code returns the value
 /// of the explicitly named `entry`. Callers clear the runtime statements so
 /// both backends invoke that function exactly once.
-pub(crate) fn compile_returning_entry(
+pub fn compile_returning_entry(
     backend: Backend,
-    db: &AnalysisHost,
+    db: &dyn HirDb,
     program: &hull::Program<'_>,
     entry: &str,
 ) -> Result<ObjectCode, String> {
@@ -85,7 +88,7 @@ pub(crate) fn compile_returning_entry(
 }
 
 fn compile_with_sonatina(
-    db: &AnalysisHost,
+    db: &dyn HirDb,
     program: &hull::Program<'_>,
     returning_entry: Option<&str>,
 ) -> Result<Vec<ObjectCode>, String> {
@@ -163,9 +166,8 @@ fn parse_output(name: &str, output: &str) -> Result<ObjectCode, String> {
         .and_then(|contracts| contracts.values().next())
         .ok_or("solc output contains no compiled object")?;
     let section = |key: &str| -> Result<Vec<u8>, String> {
-        let hex = contract["evm"][key]["object"].as_str().unwrap_or("");
-        revm::primitives::hex::decode(hex)
-            .map_err(|error| format!("solc returned invalid {key} hex: {error}"))
+        let object_hex = contract["evm"][key]["object"].as_str().unwrap_or("");
+        hex::decode(object_hex).map_err(|error| format!("solc returned invalid {key} hex: {error}"))
     };
     Ok(ObjectCode {
         name: name.to_owned(),
@@ -174,55 +176,45 @@ fn parse_output(name: &str, output: &str) -> Result<ObjectCode, String> {
     })
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) mod solc {
+mod solc {
     use std::cell::RefCell;
 
-    use wasm_bindgen::JsValue;
+    type StandardJsonCompiler = Box<dyn Fn(&str) -> Result<String, String>>;
 
     thread_local! {
-        static COMPILE: RefCell<Option<js_sys::Function>> = const { RefCell::new(None) };
+        static REGISTERED: RefCell<Option<StandardJsonCompiler>> = const { RefCell::new(None) };
     }
 
-    /// Stores a JavaScript function that takes Standard JSON input as a
-    /// string and returns Standard JSON output as a string.
-    pub(crate) fn register(compile: js_sys::Function) {
-        COMPILE.with(|slot| *slot.borrow_mut() = Some(compile));
+    /// Registers a function that takes solc Standard JSON input as a string
+    /// and returns Standard JSON output as a string, such as `solidity_compile`
+    /// from solc's emscripten build. The solc backend then uses it instead of
+    /// the `solc` executable.
+    pub fn set_standard_json_compiler(compile: impl Fn(&str) -> Result<String, String> + 'static) {
+        REGISTERED.with(|slot| *slot.borrow_mut() = Some(Box::new(compile)));
     }
 
     pub(crate) fn compile_standard_json(input: &str) -> Result<String, String> {
-        COMPILE.with(|slot| {
-            let slot = slot.borrow();
-            let compile = slot.as_ref().ok_or("The solc compiler is not loaded.")?;
-            compile
-                .call1(&JsValue::NULL, &JsValue::from_str(input))
-                .map_err(|error| {
-                    error
-                        .as_string()
-                        .unwrap_or_else(|| format!("solc threw an exception: {error:?}"))
-                })?
-                .as_string()
-                .ok_or_else(|| "solc returned a non-string result".to_owned())
-        })
+        REGISTERED
+            .with(|slot| slot.borrow().as_ref().map(|compile| compile(input)))
+            .unwrap_or_else(|| run_executable(input))
     }
-}
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod solc {
-    use std::{
-        io::Write,
-        path::PathBuf,
-        process::{Command, Stdio},
-    };
+    #[cfg(target_arch = "wasm32")]
+    fn run_executable(_input: &str) -> Result<String, String> {
+        Err("The solc compiler is not loaded.".to_owned())
+    }
 
-    pub(crate) fn path() -> PathBuf {
-        std::env::var_os("SOLC")
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run_executable(input: &str) -> Result<String, String> {
+        use std::{
+            io::Write,
+            path::PathBuf,
+            process::{Command, Stdio},
+        };
+
+        let solc = std::env::var_os("SOLC")
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("solc"))
-    }
-
-    pub(crate) fn compile_standard_json(input: &str) -> Result<String, String> {
-        let solc = path();
+            .unwrap_or_else(|| PathBuf::from("solc"));
         let mut child = Command::new(&solc)
             .arg("--standard-json")
             .stdin(Stdio::piped())

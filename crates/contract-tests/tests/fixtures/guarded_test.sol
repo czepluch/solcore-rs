@@ -3,7 +3,7 @@ pragma solcore;
 import * from std;
 import * from std.dispatch;
 import { selector } from external_calls;
-import { prank, deployCode } from cheatcodes;
+import { prank, deployCode } from std.test;
 
 contract Guarded {
     admin: address;

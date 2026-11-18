@@ -94,6 +94,10 @@ pub const STD_FILES: &[(&str, &str)] = &[
         )),
     ),
     (
+        "test.sol",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../std/test.sol")),
+    ),
+    (
         "unchecked/signed.sol",
         include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -1481,7 +1485,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_std_file_set_is_exactly_the_expected_twelve_files() {
+    fn embedded_std_file_set_is_exactly_the_expected_thirteen_files() {
         let names = STD_FILES
             .iter()
             .map(|(name, _)| *name)
@@ -1498,6 +1502,7 @@ mod tests {
                 "opcodes.sol",
                 "signed.sol",
                 "std.sol",
+                "test.sol",
                 "unchecked/signed.sol",
                 "unchecked/unsigned.sol",
                 "unsigned.sol",

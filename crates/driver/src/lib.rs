@@ -13,6 +13,7 @@ mod modules;
 mod paths;
 mod pipeline;
 mod standard_json;
+mod test_command;
 mod trace;
 
 use std::{env, ffi::OsStr, process, thread};
@@ -38,10 +39,15 @@ pub fn run() {
             env::args_os().skip(2).collect(),
         ));
     }
+    let command = if env::args_os().nth(1).as_deref() == Some(OsStr::new("test")) {
+        pipeline::Command::Test
+    } else {
+        pipeline::Command::Compile
+    };
     let compiler = match thread::Builder::new()
         .name("solcore-compiler".to_owned())
         .stack_size(COMPILER_STACK_SIZE)
-        .spawn(pipeline::run_compiler)
+        .spawn(move || pipeline::run_compiler(command))
     {
         Ok(compiler) => compiler,
         Err(err) => {
