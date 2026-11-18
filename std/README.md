@@ -1,6 +1,6 @@
 # Solcore standard library
 
-The twelve `.sol` files in this directory (including `unchecked/`) are the standard library for the Rust
+The thirteen `.sol` files in this directory (including `unchecked/`) are the standard library for the Rust
 compiler. Format them with `solcore-fmt`. Parser, frontend, specialization, and
 backend tests read these same sources directly.
 
